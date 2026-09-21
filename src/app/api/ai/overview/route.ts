@@ -13,6 +13,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { createGeminiClient, rotateApiKey } from '@/lib/ai-engine';
+import { getClientIp, isRateLimited } from '@/lib/ssrf-guard';
 import {
   BLOCS, buildAlertBrief, timeAgo,
   type AlertBrief, type Bloc, type DigestQuake, type DigestReport,
@@ -306,6 +307,16 @@ async function geminiOverview(mode: Mode, digest: Digest, keys: string[], headli
 /* ─────────────────────────── Handler ─────────────────────────── */
 
 export async function POST(request: NextRequest) {
+  // Guards the shared GEMINI_API_KEY_* pool that /api/ai/analyze and
+  // /api/ai/briefing also draw from — without this, unbounded calls here
+  // exhaust the same keys and starve those endpoints too.
+  if (isRateLimited(getClientIp(request), 5, 60_000)) {
+    return NextResponse.json(
+      { error: 'Rate limit exceeded. Maximum 5 requests per minute.' },
+      { status: 429 }
+    );
+  }
+
   let body: { mode?: Mode; payload?: any };
   try {
     body = await request.json();
